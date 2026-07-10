@@ -4,12 +4,13 @@ import { ChangeEvent, useState } from 'react';
 type ProcessResponse = {
   jobId: string;
   downloadUrl: string;
+  cloudinaryUrl?: string | null;
   originalDuration: number;
   processedDuration: number;
   removedSeconds: number;
 };
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '')).replace(/\/$/, '');
 
 export function Dashboard() {
   const [file, setFile] = useState<File | null>(null);
@@ -31,13 +32,25 @@ export function Dashboard() {
       return;
     }
 
+    if (!API_BASE_URL) {
+      setError('Missing VITE_API_BASE_URL. In Vercel, set it to your HTTPS Render backend URL, then redeploy.');
+      return;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
-    setStatus('Uploading and analyzing silence across the full clip...');
-    setProgress(35);
+    setStatus('Checking backend connection...');
+    setProgress(15);
     setError('');
 
     try {
+      const health = await fetch(`${API_BASE_URL}/health`, { method: 'GET' });
+      if (!health.ok) {
+        throw new Error(`Backend health check returned ${health.status}. Check your Render URL and CORS settings.`);
+      }
+
+      setStatus('Uploading and analyzing silence across the full clip...');
+      setProgress(35);
       const response = await fetch(`${API_BASE_URL}/api/videos/process`, {
         method: 'POST',
         body: formData,
@@ -53,13 +66,19 @@ export function Dashboard() {
       setProgress(100);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : 'Unknown processing error';
-      setError(`Processing failed: ${message}`);
-      setStatus('Check the backend terminal logs for the exact stack trace.');
+      setError(
+        `Processing failed: ${message}. If this says Failed to fetch on Vercel, verify VITE_API_BASE_URL points to your HTTPS Render backend and ALLOWED_ORIGINS contains your exact Vercel domain.`,
+      );
+      setStatus('Check the Render backend logs for the exact stack trace.');
       setProgress(0);
     }
   }
 
-  const downloadHref = result ? `${API_BASE_URL}${result.downloadUrl}` : '#';
+  const downloadHref = result
+    ? result.downloadUrl.startsWith('http')
+      ? result.downloadUrl
+      : `${API_BASE_URL}${result.downloadUrl}`
+    : '#';
 
   return (
     <main className="min-h-screen bg-[#080811] text-white">
@@ -111,7 +130,8 @@ export function Dashboard() {
                 <Metric label="Original" value={`${result.originalDuration}s`} />
                 <Metric label="Processed" value={`${result.processedDuration}s`} />
                 <Metric label="Removed" value={`${result.removedSeconds}s`} />
-                <a className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-400 px-5 py-4 font-black text-slate-950" href={downloadHref}>
+                {result.cloudinaryUrl && <Metric label="Storage" value="Cloudinary" />}
+                <a className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-400 px-5 py-4 font-black text-slate-950" href={downloadHref} target="_blank" rel="noreferrer">
                   <Download size={20} /> Download Edit
                 </a>
               </div>
@@ -132,4 +152,4 @@ function Metric({ label, value }: { label: string; value: string }) {
       <p className="text-2xl font-black text-cyan-300">{value}</p>
     </div>
   );
-}
+    }
